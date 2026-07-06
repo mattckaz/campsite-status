@@ -1,0 +1,78 @@
+name: Deploy dashboard to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: https://mattckaz.github.io/campsite-status/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare pages artifact
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      # actions/deploy-pages occasionally fails immediately with
+      # "Deployment failed, try again later" due to transient GitHub
+      # Pages backend flakiness (not a build problem). Retry a couple
+      # times before giving up.
+      - name: Deploy (attempt 1)
+        id: deploy1
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+
+      - name: Wait before retry 1
+        if: steps.deploy1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy (attempt 2)
+        id: deploy2
+        if: steps.deploy1.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+
+      - name: Wait before retry 2
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        run: sleep 30
+
+      - name: Deploy (attempt 3)
+        id: deploy3
+        if: steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+
+      - name: Verify a deploy succeeded
+        if: always()
+        run: |
+          for outcome in "${{ steps.deploy1.outcome }}" "${{ steps.deploy2.outcome }}" "${{ steps.deploy3.outcome }}"; do
+            if [ "$outcome" = "success" ]; then
+              echo "Deployment succeeded."
+              exit 0
+            fi
+          done
+          echo "All deploy attempts failed."
+          exit 1
